@@ -30,12 +30,13 @@ type Exporter struct {
 	URI   string
 	mutex sync.RWMutex
 
-	up, clusterServers                                 prometheus.Gauge
-	nodeCount, serviceCount                            prometheus.Counter
+	up, clusterServers                                            prometheus.Gauge
+	nodeCount, serviceCount                                       prometheus.Counter
 	serviceNodesTotal, serviceNodesHealthy, nodeChecks, keyValues *prometheus.GaugeVec
-	client                                             *consul_api.Client
-	kvPrefix                                          string
-	kvFilter                                          *regexp.Regexp
+	serviceEntriesNodesTotal, serviceEntriesNodesHealthy          *prometheus.GaugeVec
+	client                                                        *consul_api.Client
+	kvPrefix                                                      string
+	kvFilter                                                      *regexp.Regexp
 }
 
 // NewExporter returns an initialized Exporter.
@@ -90,6 +91,24 @@ func NewExporter(uri string, kvPrefix string, kvFilter string) *Exporter {
 			[]string{"service", "node"},
 		),
 
+		serviceEntriesNodesTotal: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: namespace,
+				Name:      "catalog_service_entries_by_nodes",
+				Help:      "Number of service entries currently registered by node for this service.",
+			},
+			[]string{"service", "node"},
+		),
+
+		serviceEntriesNodesHealthy: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: namespace,
+				Name:      "catalog_service_entries_by_node_healthy",
+				Help:      "Number of service entries currently registered by node that are healthy for this service.",
+			},
+			[]string{"service", "node"},
+		),
+
 		nodeChecks: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
 				Namespace: namespace,
@@ -124,6 +143,8 @@ func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 
 	e.serviceNodesTotal.Describe(ch)
 	e.serviceNodesHealthy.Describe(ch)
+	e.serviceEntriesNodesTotal.Describe(ch)
+	e.serviceEntriesNodesHealthy.Describe(ch)
 	e.keyValues.Describe(ch)
 }
 
@@ -141,6 +162,8 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 	// Reset metrics.
 	e.serviceNodesTotal.Reset()
 	e.serviceNodesHealthy.Reset()
+	e.serviceEntriesNodesTotal.Reset()
+	e.serviceEntriesNodesHealthy.Reset()
 	e.nodeChecks.Reset()
 
 	e.setMetrics(services, checks)
@@ -152,6 +175,8 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 
 	e.serviceNodesTotal.Collect(ch)
 	e.serviceNodesHealthy.Collect(ch)
+	e.serviceEntriesNodesTotal.Collect(ch)
+	e.serviceEntriesNodesHealthy.Collect(ch)
 	e.nodeChecks.Collect(ch)
 
 	e.keyValues.Reset()
@@ -232,7 +257,17 @@ func (e *Exporter) setMetrics(services <-chan []*consul_api.ServiceEntry, checks
 			}
 
 			// We should have one ServiceEntry per node, so use that for total nodes.
+			// NOTE: The above statement is false.  You can run multiple ServiceEntries per node.
+			log.Printf("Service: %v", service[0].Service)
+			log.Printf("Service len: %d", len(service))
 			e.serviceNodesTotal.WithLabelValues(service[0].Service.Service).Set(float64(len(service)))
+
+			//e.serviceEntriesNodesTotal.Collect(ch)
+			//e.serviceEntriesNodesHealthy.Collect(ch)
+			var serviceEntriesNodesTotal map[string]int
+			var serviceEntriesNodesHealthy map[string]int
+			serviceEntriesNodesTotal = make(map[string]int)
+			serviceEntriesNodesHealthy = make(map[string]int)
 
 			for _, entry := range service {
 				// We have a Node, a Service, and one or more Checks. Our
@@ -248,10 +283,24 @@ func (e *Exporter) setMetrics(services <-chan []*consul_api.ServiceEntry, checks
 					}
 				}
 
+				serviceNode := entry.Service.Service + "-" + entry.Node.Node
+
+				serviceNodeTotal := serviceEntriesNodesTotal[serviceNode] + 1
+				serviceEntriesNodesTotal[serviceNode] = serviceNodeTotal
+
+				serviceNodeHealthy := serviceEntriesNodesHealthy[serviceNode]
+				if passing == 1 {
+					serviceNodeHealthy++
+					serviceEntriesNodesHealthy[serviceNode] = serviceNodeHealthy
+				}
+
 				log.Infof("%v/%v status is %v", entry.Service.Service, entry.Node.Node, passing)
 
 				e.serviceNodesHealthy.WithLabelValues(entry.Service.Service, entry.Node.Node).Set(float64(passing))
+				e.serviceEntriesNodesTotal.WithLabelValues(entry.Service.Service, entry.Node.Node).Set(float64(serviceNodeTotal))
+				e.serviceEntriesNodesHealthy.WithLabelValues(entry.Service.Service, entry.Node.Node).Set(float64(serviceNodeHealthy))
 			}
+
 		case entry, b := <-checks:
 			running = b
 			for _, hc := range entry {
