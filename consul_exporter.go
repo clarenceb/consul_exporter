@@ -70,7 +70,7 @@ func NewExporter(uri, kvPrefix, kvFilter string, healthSummary bool) *Exporter {
 				Name:      "catalog_service_node_healthy",
 				Help:      "Is this service healthy on this node?",
 			},
-			[]string{"service", "node"},
+			[]string{"service_id", "service", "node"},
 		),
 		nodeChecks: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
@@ -86,7 +86,7 @@ func NewExporter(uri, kvPrefix, kvFilter string, healthSummary bool) *Exporter {
 				Name:      "health_service_status",
 				Help:      "Status of health checks associated with a service.",
 			},
-			[]string{"check", "node", "service"},
+			[]string{"check", "node", "service_id", "service"},
 		),
 		keyValues: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
@@ -189,7 +189,7 @@ func (e *Exporter) collect() {
 		if hc.ServiceID == "" {
 			e.nodeChecks.WithLabelValues(hc.CheckID, hc.Node).Set(passing)
 		} else {
-			e.serviceChecks.WithLabelValues(hc.CheckID, hc.Node, hc.ServiceID).Set(passing)
+			e.serviceChecks.WithLabelValues(hc.CheckID, hc.Node, hc.ServiceID, hc.ServiceName).Set(passing)
 		}
 	}
 }
@@ -215,7 +215,7 @@ func (e *Exporter) collectHealthSummary(serviceNames map[string][]string) {
 					break
 				}
 			}
-			e.serviceNodesHealthy.WithLabelValues(entry.Service.ID, entry.Node.Node).Set(float64(passing))
+			e.serviceNodesHealthy.WithLabelValues(entry.Service.ID, entry.Service.Service, entry.Node.Node).Set(float64(passing))
 		}
 	}
 }
